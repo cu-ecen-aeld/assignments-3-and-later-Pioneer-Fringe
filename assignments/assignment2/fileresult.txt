@@ -1,0 +1,4 @@
+zding@Ubuntu:~/assignment-1-Pioneer-Fringe/finder-app$ make aarch64-none-linux-gnu-
+aarch64-none-linux-gnu-gcc -g -Wall -c -o writer.o writer.c
+zding@Ubuntu:~/assignment-1-Pioneer-Fringe/finder-app$ file writer.o
+writer.o: ELF 64-bit LSB relocatable, ARM aarch64, version 1 (SYSV), with debug_info, not stripped
