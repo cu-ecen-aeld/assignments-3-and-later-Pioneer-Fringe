@@ -96,7 +96,7 @@ sudo mknod -m 666 dev/console c 5 1
 # ZD: Clean and build the writer utility
 cd ${FINDER_APP_DIR}
 make clean
-make aarch64-none-linux-gnu-
+make ${CROSS_COMPILE}
 
 # ZD: Copy the finder related scripts and executables to the /home directory
 # on the target rootfs
