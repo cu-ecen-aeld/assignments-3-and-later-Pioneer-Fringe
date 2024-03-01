@@ -160,6 +160,7 @@ int main(int argc, char *argv[])
             ssize_t numRecvdBytes;
             while (!exitLoop)
             {
+                memset(dataBuffer, 0, BUFFER_SIZE);
                 numRecvdBytes = recv(acceptedFd, dataBuffer, sizeof(dataBuffer), 0);
                 if ((numRecvdBytes <= 0) || (strchr(dataBuffer, '\n') != NULL))
                 {
