@@ -1,12 +1,13 @@
-CC := gcc
-CFLAGS = -g -Wall -Werror
-LDFLAGS := -pthread -lrt
+CC ?= ${CROSS_COMPILE}gcc
+CFLAGS ?= -g -Wall -Werror
+TARGET ?= aesdsocket
+LDFLAGS ?= -lpthread -lrt
 
 default:
-	${CROSS_COMPILE}${CC} aesdsocket.c -o aesdsocket ${CFLAGS} ${LDFLAGS}
+	${CC} ${TARGET}.c -o ${TARGET} ${CFLAGS} ${LDFLAGS}
 	
 all:
-	${CC} aesdsocket.c -o aesdsocket ${CFLAGS} ${LDFLAGS}
+	${CC} ${TARGET}.c -o ${TARGET} ${CFLAGS} ${LDFLAGS}
 
 clean:
-	rm -f aesdsocket *.o
+	rm -f ${TARGET} *.o
