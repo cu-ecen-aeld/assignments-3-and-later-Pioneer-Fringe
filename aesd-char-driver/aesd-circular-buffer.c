@@ -16,6 +16,12 @@
 
 #include "aesd-circular-buffer.h"
 
+void aesd_buffer_ptr_inc(uint8_t * bufPtr)
+{
+    (*bufPtr)++;
+    if ((*bufPtr) >= AESDCHAR_MAX_WRITE_OPERATIONS_SUPPORTED) (*bufPtr) = 0;
+}
+
 /**
  * @param buffer the buffer to search for corresponding offset.  Any necessary locking must be performed by caller.
  * @param char_offset the position to search for in the buffer list, describing the zero referenced
@@ -29,9 +35,38 @@
 struct aesd_buffer_entry *aesd_circular_buffer_find_entry_offset_for_fpos(struct aesd_circular_buffer *buffer,
             size_t char_offset, size_t *entry_offset_byte_rtn )
 {
-    /**
-    * TODO: implement per description
-    */
+    size_t opCharOffset = char_offset;
+    uint8_t opOffset = buffer->out_offs;
+    
+    //if buffer is Full, in_offs and out_offs would start the same
+    if (buffer->full)
+    {
+        if (opCharOffset < buffer->entry[opOffset].size)
+        {
+            *entry_offset_byte_rtn = opCharOffset;
+            return &(buffer->entry[opOffset]);
+        }
+        else
+        {
+            opCharOffset -= buffer->entry[opOffset].size;
+            aesd_buffer_ptr_inc(&opOffset);
+        }
+    }
+    
+    while (opOffset != buffer->in_offs)
+    {
+        if (opCharOffset < buffer->entry[opOffset].size)
+        {
+            *entry_offset_byte_rtn = opCharOffset;
+            return &(buffer->entry[opOffset]);
+        }
+        else
+        {
+            opCharOffset -= buffer->entry[opOffset].size;
+            aesd_buffer_ptr_inc(&opOffset);
+        }
+    }
+    
     return NULL;
 }
 
@@ -44,9 +79,17 @@ struct aesd_buffer_entry *aesd_circular_buffer_find_entry_offset_for_fpos(struct
 */
 void aesd_circular_buffer_add_entry(struct aesd_circular_buffer *buffer, const struct aesd_buffer_entry *add_entry)
 {
-    /**
-    * TODO: implement per description
-    */
+    if (buffer->full)
+    {
+        aesd_buffer_ptr_inc(&(buffer->out_offs));
+    }
+    
+    buffer->entry[buffer->in_offs] = *add_entry;
+    aesd_buffer_ptr_inc(&(buffer->in_offs));
+    if (buffer->in_offs == buffer->out_offs)
+        buffer->full = true;
+    else
+        buffer->full = false;
 }
 
 /**
