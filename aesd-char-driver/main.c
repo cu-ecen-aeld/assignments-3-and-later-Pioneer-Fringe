@@ -61,6 +61,7 @@ ssize_t aesd_read(struct file *filp, char __user *buf, size_t count,
     if (tempEntry != NULL)
     {
         retval = tempEntry->size - entryOffset;
+        if (retval > count) retval = count;
         if (copy_to_user(buf, tempEntry->buffptr + entryOffset, (unsigned long)retval))
         {
             retval = -EFAULT;
@@ -83,10 +84,10 @@ ssize_t aesd_write(struct file *filp, const char __user *buf, size_t count,
     ssize_t retval = -ENOMEM;
     bool lineCompleted = false;
     struct aesd_buffer_entry newEntry;
+
     PDEBUG("write %zu bytes with offset %lld",count,*f_pos);
 
     down_write(&(aesd_device.cBufferSem)); //lock device
-    
     
     aesd_device.tempBuffer = (char *)krealloc((void *)aesd_device.tempBuffer, (count + aesd_device.tempBufferSize), GFP_KERNEL);
     

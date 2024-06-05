@@ -22,11 +22,11 @@
     static char fileName[] = "/dev/aesdchar";
 #else
     static char fileName[] = "/var/tmp/aesdsocketdata";
+    pthread_mutex_t fileMutex;
 #endif
 //BUILD FLAG
 
 static int socketFd = -1;
-pthread_mutex_t fileMutex;
 timer_t timerId = 0;
 
 struct connHandlerData_s
@@ -167,7 +167,11 @@ void* connHandler(void* connHandlerParams)
 {
     struct connHandlerData_s* connHandlerArgs = (struct connHandlerData_s *) connHandlerParams;
     char *dataBuffer = NULL;
+//BUILD FLAG
+#if (!USE_AESD_CHAR_DEVICE)
     int rtnVal;
+#endif
+//BUILD FLAG
     FILE *pFileToWrite = NULL;
     unsigned char exitLoop;
     
@@ -183,6 +187,8 @@ void* connHandler(void* connHandlerParams)
     }
     
     //Read Connection and Write to File
+//BUILD FLAG
+#if (!USE_AESD_CHAR_DEVICE)
     rtnVal = pthread_mutex_lock(&fileMutex);
     if (rtnVal != 0)
     {
@@ -192,6 +198,8 @@ void* connHandler(void* connHandlerParams)
         return connHandlerParams;
     }
     else
+#endif
+//BUILD FLAG
     {
         pFileToWrite = fopen(fileName, "a");
         if (pFileToWrite == NULL)
@@ -237,7 +245,8 @@ void* connHandler(void* connHandlerParams)
         }
         fclose(pFileToWrite);
         free(dataBuffer);
-        
+//BUILD FLAG
+#if (!USE_AESD_CHAR_DEVICE)        
         rtnVal = pthread_mutex_unlock(&fileMutex);
         if (rtnVal != 0)
         {
@@ -246,9 +255,13 @@ void* connHandler(void* connHandlerParams)
             connHandlerArgs->connClosed = -1;
             return connHandlerParams;
         }
+#endif
+//BUILD FLAG
     }
     
     //Read File and Write to Connection
+//BUILD FLAG
+#if (!USE_AESD_CHAR_DEVICE) 
     rtnVal = pthread_mutex_lock(&fileMutex);
     if (rtnVal != 0)
     {
@@ -258,6 +271,8 @@ void* connHandler(void* connHandlerParams)
         return connHandlerParams;
     }
     else
+#endif
+//BUILD FLAG
     {
         pFileToWrite = fopen(fileName, "r");
         if (pFileToWrite == NULL)
@@ -302,7 +317,8 @@ void* connHandler(void* connHandlerParams)
         }
         fclose(pFileToWrite);
         free(dataBuffer);
-        
+//BUILD FLAG
+#if (!USE_AESD_CHAR_DEVICE)
         rtnVal = pthread_mutex_unlock(&fileMutex);
         if (rtnVal != 0)
         {
@@ -311,6 +327,8 @@ void* connHandler(void* connHandlerParams)
             connHandlerArgs->connClosed = -1;
             return connHandlerParams;
         }
+#endif
+//BUILD FLAG
     }
     
     close(connHandlerArgs->connFd);
@@ -339,9 +357,13 @@ int main(int argc, char *argv[])
     pthread_t threadId;
     int connFd = -1;
     struct connEntry *tempEntry = NULL;
+//BUILD FLAG
+#if (!USE_AESD_CHAR_DEVICE)
     struct sigevent sev;
     struct sigaction sa;
     struct itimerspec its;
+#endif
+//BUILD FLAG
     int closedConnFound;
     //sigset_t set, oldSet;
     
@@ -413,6 +435,8 @@ int main(int argc, char *argv[])
     
     openlog(NULL, 0, LOG_USER);
 
+//BUILD FLAG
+#if (!USE_AESD_CHAR_DEVICE)
     //Setup timer
     sev.sigev_notify = SIGEV_SIGNAL;
     sev.sigev_signo = SIGRTMIN;
@@ -425,7 +449,7 @@ int main(int argc, char *argv[])
         closelog();
         exit(-1);
     }
-    
+
     //Establish handler for timer signal
     sa.sa_flags = SA_SIGINFO;
     sa.sa_sigaction = handle_timestamp;
@@ -452,7 +476,8 @@ int main(int argc, char *argv[])
         closelog();
         exit(-1);
     }
-
+#endif
+//BUILD FLAG
     if (listen(socketFd, 20) != 0)
     {
         syslog(LOG_ERR, "Setting Listen to Socket Failed!\n");
@@ -482,7 +507,7 @@ int main(int argc, char *argv[])
             //sigaddset(&set, SIGINT);
             //sigaddset(&set, SIGTERM);
             //pthread_sigmask(SIG_BLOCK, &set, &oldSet);
-            int rtnVal = pthread_create(&threadId, NULL, connHandler, connData);
+            rtnVal = pthread_create(&threadId, NULL, connHandler, connData);
             if (rtnVal != 0)
             {
                 syslog(LOG_ERR, "pthread_create failed with error %d creating thread %lu!\n", rtnVal, threadId);
