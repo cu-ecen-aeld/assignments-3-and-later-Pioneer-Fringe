@@ -15,7 +15,16 @@
 #define BUFFER_SIZE 1024
 #define TIMESTAMP_INT 10
 
-static char fileName[] = "/var/tmp/aesdsocketdata";
+#define USE_AESD_CHAR_DEVICE 1
+
+//BUILD FLAG
+#if (USE_AESD_CHAR_DEVICE)
+    static char fileName[] = "/dev/aesdchar";
+#else
+    static char fileName[] = "/var/tmp/aesdsocketdata";
+#endif
+//BUILD FLAG
+
 static int socketFd = -1;
 pthread_mutex_t fileMutex;
 timer_t timerId = 0;
@@ -75,13 +84,16 @@ void handle_sigint_sigterm(int sig)
             socketFd = -1;
         }
 
+//BUILD FLAG
+#if (!USE_AESD_CHAR_DEVICE)
         if (remove(fileName) != 0)
         {
             syslog(LOG_ERR, "Deleting %s Failed!\n", fileName);
             closelog();
             exit(-1);
         }
-        
+#endif
+//BUILD FLAG   
         if (timer_delete(timerId) != 0)
         {
             syslog(LOG_ERR, "timer_delete Failed!\n");
@@ -96,12 +108,14 @@ void handle_sigint_sigterm(int sig)
 
 void handle_timestamp(int sig, siginfo_t *si, void *uc)
 {
+//BUILD FLAG
+#if (!USE_AESD_CHAR_DEVICE)
     char timestampStr[128] = { 0 };
     time_t timerPtr;
     struct tm *timeInfo;
     FILE *pFileToWrite = NULL;
     int rtnVal;
-    
+
     if (SIGRTMIN == sig)
     {
         rtnVal = pthread_mutex_lock(&fileMutex);
@@ -145,6 +159,8 @@ void handle_timestamp(int sig, siginfo_t *si, void *uc)
             rtnVal = pthread_mutex_unlock(&fileMutex);
         }
     }
+#endif
+//BUILD FLAG   
 }
 
 void* connHandler(void* connHandlerParams)
