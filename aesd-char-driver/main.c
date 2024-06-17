@@ -19,6 +19,7 @@
 #include <linux/fs.h> // file_operations
 #include <linux/slab.h> //kmalloc, krealloc, kfree
 #include "aesdchar.h"
+#include "aesd_ioctl.h"
 int aesd_major =   0; // use dynamic major
 int aesd_minor =   0;
 
@@ -51,11 +52,17 @@ ssize_t aesd_read(struct file *filp, char __user *buf, size_t count,
     struct aesd_buffer_entry *tempEntry;
     size_t entryOffset;
     ssize_t retval = 0;
+    //uint8_t i;
 
     PDEBUG("read %zu bytes with offset %lld",count,*f_pos);
     
     down_read(&(aesd_device.cBufferSem)); //lock device
-    
+/*    
+    for (i = 0; i < AESDCHAR_MAX_WRITE_OPERATIONS_SUPPORTED ; i++)
+    {
+        PDEBUG("cBuffer[%u], size: %zu = %s", i, aesd_device.cBuffer.entry[i].size, aesd_device.cBuffer.entry[i].buffptr);
+    }
+*/
     tempEntry = aesd_circular_buffer_find_entry_offset_for_fpos(&(aesd_device.cBuffer), (size_t)*f_pos, &entryOffset);
     
     if (tempEntry != NULL)
@@ -132,16 +139,127 @@ ssize_t aesd_write(struct file *filp, const char __user *buf, size_t count,
     }
 
 aesd_write_exit:
-    up_write(&(aesd_device.cBufferSem)); //lock device
+    up_write(&(aesd_device.cBufferSem)); //unlock device
 
     return retval;
 }
+
+loff_t aesd_llseek(struct file *filp, loff_t off, int whence)
+{
+    uint8_t i;
+    size_t totalSize = 0;
+    loff_t retval;
+
+    down_write(&(aesd_device.cBufferSem)); //lock device
+    
+    for (i = 0; i < AESDCHAR_MAX_WRITE_OPERATIONS_SUPPORTED ; i++)
+    {
+        if (aesd_device.cBuffer.entry[i].buffptr != NULL)
+        {
+            totalSize += aesd_device.cBuffer.entry[i].size;
+        }
+    }
+    
+    retval = fixed_size_llseek(filp, off, whence, (loff_t)totalSize);
+    PDEBUG("llseek: total size=%ld, offset=%lld, retval=%lld.", totalSize, off, retval);
+    
+    up_write(&(aesd_device.cBufferSem)); //unlock device
+    
+    return retval;
+}
+
+long aesd_ioctl(struct file *filp, unsigned int cmd, unsigned long arg)
+{
+	int retval = 0;
+    struct aesd_seekto seekto;
+    uint8_t numOfEntries = 0, i, opBufferIndex;
+    long file_offset = 0;
+    
+	/*
+	 * extract the type and number bitfields, and don't decode
+	 * wrong cmds: return ENOTTY (inappropriate ioctl) before access_ok()
+	 */
+	if (_IOC_TYPE(cmd) != AESD_IOC_MAGIC) return -ENOTTY;
+	if (_IOC_NR(cmd) > AESDCHAR_IOC_MAXNR) return -ENOTTY;
+
+	switch(cmd) {
+
+	    case AESDCHAR_IOCSEEKTO:
+	        if (copy_from_user(&seekto, (const void __user *)arg, sizeof(seekto)) != 0)
+	        {
+	            retval = -EFAULT;
+	            goto aesd_ioctl_exit;
+	        }
+	        else
+	        {
+	            down_write(&(aesd_device.cBufferSem)); //lock device
+
+	            if (aesd_device.cBuffer.full)
+	            {
+	                numOfEntries = AESDCHAR_MAX_WRITE_OPERATIONS_SUPPORTED;
+	            }
+	            else
+	            {
+	                numOfEntries = aesd_device.cBuffer.in_offs - aesd_device.cBuffer.out_offs;
+	            }
+	            
+	            if ((seekto.write_cmd) < 0 || (seekto.write_cmd >= numOfEntries))
+	            {
+	                PDEBUG("ioctl AESDCHAR_IOCSEEKTO: number of commands:%d NOT fit buffer size:%d", seekto.write_cmd, numOfEntries);
+	                retval = -EINVAL;
+	                goto aesd_ioctl_unlock_exit;
+	            }
+	            
+	            for (i = 0; i < seekto.write_cmd; i++)
+	            {
+	                opBufferIndex = aesd_device.cBuffer.out_offs + i;
+	                if (opBufferIndex >= AESDCHAR_MAX_WRITE_OPERATIONS_SUPPORTED)
+	                {
+	                    opBufferIndex -= AESDCHAR_MAX_WRITE_OPERATIONS_SUPPORTED;
+	                }
+	                
+	                file_offset += aesd_device.cBuffer.entry[opBufferIndex].size;
+	            }
+	            
+	            opBufferIndex = aesd_device.cBuffer.out_offs + seekto.write_cmd;
+	            if (opBufferIndex >= AESDCHAR_MAX_WRITE_OPERATIONS_SUPPORTED)
+	            {
+	                opBufferIndex -= AESDCHAR_MAX_WRITE_OPERATIONS_SUPPORTED;
+	            }
+	            if ((seekto.write_cmd_offset < 0) || (seekto.write_cmd_offset >= aesd_device.cBuffer.entry[opBufferIndex].size))
+	            {
+	                PDEBUG("ioctl AESDCHAR_IOCSEEKTO: command offset:%d NOT fit buffer entry size:%ld", seekto.write_cmd_offset, aesd_device.cBuffer.entry[opBufferIndex].size);
+	                retval = -EINVAL;
+	                goto aesd_ioctl_unlock_exit;
+	            }
+	            
+	            file_offset += seekto.write_cmd_offset;
+	            
+	            filp->f_pos = file_offset;
+	            retval = file_offset;
+	            goto aesd_ioctl_unlock_exit;
+	        }
+		break;
+
+
+	    default:  /* redundant, as cmd was checked against MAXNR */
+		    return -ENOTTY;
+	}
+aesd_ioctl_unlock_exit:
+    up_write(&(aesd_device.cBufferSem)); //unlock device
+aesd_ioctl_exit:
+	return retval;
+
+}
+
 struct file_operations aesd_fops = {
-    .owner =    THIS_MODULE,
-    .read =     aesd_read,
-    .write =    aesd_write,
-    .open =     aesd_open,
-    .release =  aesd_release,
+    .owner          = THIS_MODULE,
+    .read           = aesd_read,
+    .write          = aesd_write,
+    .open           = aesd_open,
+    .release        = aesd_release,
+   	.llseek         = aesd_llseek,
+    .unlocked_ioctl = aesd_ioctl,
 };
 
 static int aesd_setup_cdev(struct aesd_dev *dev)

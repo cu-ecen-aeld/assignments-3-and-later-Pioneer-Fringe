@@ -11,6 +11,7 @@
 #include <sys/queue.h>
 #include <time.h>
 #include <stdint.h>
+#include "../aesd-char-driver/aesd_ioctl.h"
 
 #define BUFFER_SIZE 1024
 #define TIMESTAMP_INT 10
@@ -92,15 +93,15 @@ void handle_sigint_sigterm(int sig)
             closelog();
             exit(-1);
         }
-#endif
-//BUILD FLAG   
+
         if (timer_delete(timerId) != 0)
         {
             syslog(LOG_ERR, "timer_delete Failed!\n");
             closelog();
             exit(-1);
         }
-        
+#endif
+//BUILD FLAG        
         closelog();
         exit(0);
     }
@@ -166,10 +167,15 @@ void handle_timestamp(int sig, siginfo_t *si, void *uc)
 void* connHandler(void* connHandlerParams)
 {
     struct connHandlerData_s* connHandlerArgs = (struct connHandlerData_s *) connHandlerParams;
-    char *dataBuffer = NULL;
+    char *writeBuffer = NULL;
+    char *sendBuffer = NULL;
+    char *recvBuffer = NULL;
 //BUILD FLAG
 #if (!USE_AESD_CHAR_DEVICE)
     int rtnVal;
+#else
+    struct aesd_seekto seekto;
+    int fileToWriteFD = -1;
 #endif
 //BUILD FLAG
     FILE *pFileToWrite = NULL;
@@ -201,7 +207,7 @@ void* connHandler(void* connHandlerParams)
 #endif
 //BUILD FLAG
     {
-        pFileToWrite = fopen(fileName, "a");
+        pFileToWrite = fopen(fileName, "a+");
         if (pFileToWrite == NULL)
         {
             syslog(LOG_ERR, "Open File %s Failed!\n", fileName);
@@ -210,10 +216,23 @@ void* connHandler(void* connHandlerParams)
             return connHandlerParams;
         }
         
-        dataBuffer = (char *)malloc(BUFFER_SIZE);
-        if (dataBuffer == NULL)
+        writeBuffer = (char *)malloc(BUFFER_SIZE);
+        if (writeBuffer == NULL)
         {
-            syslog(LOG_ERR, "Malloc operating Buffer Failed!\n");
+            syslog(LOG_ERR, "Malloc write Buffer Failed!\n");
+            fclose(pFileToWrite);
+            close(connHandlerArgs->connFd);
+            connHandlerArgs->connClosed = -1;
+            return connHandlerParams;
+        }
+        memset(writeBuffer, 0, BUFFER_SIZE);
+    
+        recvBuffer = (char *)malloc(BUFFER_SIZE);
+        if (recvBuffer == NULL)
+        {
+            syslog(LOG_ERR, "Malloc temp Buffer Failed!\n");
+            fclose(pFileToWrite);
+            free(writeBuffer);
             close(connHandlerArgs->connFd);
             connHandlerArgs->connClosed = -1;
             return connHandlerParams;
@@ -221,30 +240,60 @@ void* connHandler(void* connHandlerParams)
         
         exitLoop = 0;
         ssize_t numRecvdBytes;
+        ssize_t writeBufferBytes = 0;
         while (!exitLoop)
         {
-            memset(dataBuffer, 0, BUFFER_SIZE);
-            numRecvdBytes = recv(connHandlerArgs->connFd, dataBuffer, sizeof(dataBuffer), 0);
-            if ((numRecvdBytes <= 0) || (strchr(dataBuffer, '\n') != NULL))
+            memset(recvBuffer, 0, BUFFER_SIZE);
+            numRecvdBytes = recv(connHandlerArgs->connFd, recvBuffer, sizeof(recvBuffer), 0);
+            if ((numRecvdBytes <= 0) || (strchr(recvBuffer, '\n') != NULL))
             {
                 exitLoop = 1;
             }
             
             if (numRecvdBytes > 0)
             {
-                if (fwrite(dataBuffer, 1, numRecvdBytes, pFileToWrite) != numRecvdBytes)
+                strcat(writeBuffer, recvBuffer);
+                writeBufferBytes += numRecvdBytes;
+            }
+        }
+        free(recvBuffer);
+        
+#if (USE_AESD_CHAR_DEVICE)
+//printf("writeBufferBytes=%ld, writeBuffer: %s\n", writeBufferBytes, writeBuffer);
+        if (strstr(writeBuffer, "AESDCHAR_IOCSEEKTO:") != NULL)
+        {
+            //To process and send ioctl command
+            if (sscanf(writeBuffer, "AESDCHAR_IOCSEEKTO:%d,%d", &seekto.write_cmd, &seekto.write_cmd_offset) == 2)
+            {
+                fileToWriteFD = fileno(pFileToWrite);
+                if ((fileToWriteFD == -1) || (ioctl(fileToWriteFD, AESDCHAR_IOCSEEKTO, &seekto) < 0))
                 {
-                    syslog(LOG_ERR, "Write to File Failed!\n");
+//printf("ZD: IOCTL debug: %d\n", fileToWriteFD);
+                    syslog(LOG_ERR, "Send AESDCHAR_IOCSEEKTO Command Failed!\n");
                     fclose(pFileToWrite);
-                    free(dataBuffer);
+                    free(writeBuffer);
                     close(connHandlerArgs->connFd);
                     connHandlerArgs->connClosed = -1;
                     return connHandlerParams;
                 }
             }
         }
-        fclose(pFileToWrite);
-        free(dataBuffer);
+        else
+#endif
+        {
+            if (fwrite(writeBuffer, 1, writeBufferBytes, pFileToWrite) != writeBufferBytes)
+            {
+                syslog(LOG_ERR, "Write to File Failed!\n");
+                fclose(pFileToWrite);
+                free(writeBuffer);
+                close(connHandlerArgs->connFd);
+                connHandlerArgs->connClosed = -1;
+                return connHandlerParams;
+            }
+        }
+        
+        //fclose(pFileToWrite);
+        free(writeBuffer);
 //BUILD FLAG
 #if (!USE_AESD_CHAR_DEVICE)        
         rtnVal = pthread_mutex_unlock(&fileMutex);
@@ -274,7 +323,7 @@ void* connHandler(void* connHandlerParams)
 #endif
 //BUILD FLAG
     {
-        pFileToWrite = fopen(fileName, "r");
+        //pFileToWrite = fopen(fileName, "r");
         if (pFileToWrite == NULL)
         {
             syslog(LOG_ERR, "Open File %s Failed!\n", fileName);
@@ -282,33 +331,34 @@ void* connHandler(void* connHandlerParams)
             connHandlerArgs->connClosed = -1;
             return connHandlerParams;
         }
-            
-        dataBuffer = (char *)malloc(BUFFER_SIZE);
-        if (dataBuffer == NULL)
+          
+        sendBuffer = (char *)malloc(BUFFER_SIZE);
+        if (sendBuffer == NULL)
         {
             syslog(LOG_ERR, "Malloc operating Buffer Failed!\n");
             close(connHandlerArgs->connFd);
             connHandlerArgs->connClosed = -1;
             return connHandlerParams;
         }
-            
+        
         exitLoop = 0;
         size_t numReadBytes;
         while (!exitLoop)
         {
-            numReadBytes = fread(dataBuffer, 1, sizeof(dataBuffer), pFileToWrite);
-            if ((numReadBytes == 0) || (numReadBytes < sizeof(dataBuffer)))
+            numReadBytes = fread(sendBuffer, 1, sizeof(sendBuffer), pFileToWrite);
+            if ((numReadBytes == 0) || (numReadBytes < sizeof(sendBuffer)))
             {
                 exitLoop = 1;
             }
             
             if (numReadBytes > 0)
             {
-                if (send(connHandlerArgs->connFd, dataBuffer, numReadBytes, 0) != numReadBytes)
+//printf("ZD: numReadBytes=%ld, sendBuffer: %s\n", numReadBytes, sendBuffer);
+                if (send(connHandlerArgs->connFd, sendBuffer, numReadBytes, 0) != numReadBytes)
                 {
                     syslog(LOG_ERR, "Send to Socket Failed!\n");
                     fclose(pFileToWrite);
-                    free(dataBuffer);
+                    free(sendBuffer);
                     close(connHandlerArgs->connFd);
                     connHandlerArgs->connClosed = -1;
                     return connHandlerParams;
@@ -316,7 +366,7 @@ void* connHandler(void* connHandlerParams)
             }
         }
         fclose(pFileToWrite);
-        free(dataBuffer);
+        free(sendBuffer);
 //BUILD FLAG
 #if (!USE_AESD_CHAR_DEVICE)
         rtnVal = pthread_mutex_unlock(&fileMutex);
